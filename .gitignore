@@ -12,3 +12,6 @@ env/
 
 # Generated posts and images
 output/
+
+# Dashboard database and images
+data/

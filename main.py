@@ -24,9 +24,10 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import Callable, Mapping, TypeVar
 from urllib.parse import quote, urlencode
 
+import httpx
 import markdown
 import requests
 from dotenv import load_dotenv
@@ -74,6 +75,7 @@ class Config:
     wp_url: str
     wp_user: str
     wp_app_pass: str
+    writing_guidance: str = ""
 
 
 @dataclass(frozen=True)
@@ -109,18 +111,30 @@ def load_config(env_file: Path, require_wordpress: bool = True) -> Config:
         ]
         raise PipelineError("\n".join(lines))
 
+    return config_from_mapping(os.environ)
+
+
+def config_from_mapping(values: Mapping[str, str | None]) -> Config:
+    """Build a Config from env-style values without checking for missing ones."""
+
+    def get(name: str, default: str = "") -> str:
+        return (values.get(name) or "").strip() or default
+
+    guidance = [
+        f"Target audience: {get('BLOG_AUDIENCE')}" if get("BLOG_AUDIENCE") else "",
+        f"Tone and style: {get('BLOG_TONE')}" if get("BLOG_TONE") else "",
+    ]
     return Config(
-        groq_api_key=os.environ["GROQ_API_KEY"].strip(),
-        gemini_api_key=os.environ["GEMINI_API_KEY"].strip(),
-        groq_model=os.getenv("GROQ_MODEL", "").strip() or DEFAULT_GROQ_MODEL,
-        gemini_model=os.getenv("GEMINI_MODEL", "").strip() or DEFAULT_GEMINI_MODEL,
-        pollinations_api_key=os.environ["POLLINATIONS_API_KEY"].strip(),
-        pollinations_base_url=os.getenv("POLLINATIONS_BASE_URL", DEFAULT_POLLINATIONS_BASE)
-        .strip()
-        .rstrip("/"),
-        wp_url=os.getenv("WP_URL", "").strip().rstrip("/"),
-        wp_user=os.getenv("WP_USER", "").strip(),
-        wp_app_pass=os.getenv("WP_APP_PASS", "").strip(),
+        groq_api_key=get("GROQ_API_KEY"),
+        gemini_api_key=get("GEMINI_API_KEY"),
+        groq_model=get("GROQ_MODEL", DEFAULT_GROQ_MODEL),
+        gemini_model=get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
+        pollinations_api_key=get("POLLINATIONS_API_KEY"),
+        pollinations_base_url=get("POLLINATIONS_BASE_URL", DEFAULT_POLLINATIONS_BASE).rstrip("/"),
+        wp_url=get("WP_URL").rstrip("/"),
+        wp_user=get("WP_USER"),
+        wp_app_pass=get("WP_APP_PASS"),
+        writing_guidance="\n".join(line for line in guidance if line),
     )
 
 
@@ -213,14 +227,18 @@ Requirements:
 - Output only the Markdown outline."""
 
 
-def generate_outline(client: Groq, model: str, topic: str) -> str:
+def with_guidance(prompt: str, guidance: str) -> str:
+    return f"{prompt}\n\nWrite for this blog's readers:\n{guidance}" if guidance else prompt
+
+
+def generate_outline(client: Groq, model: str, topic: str, guidance: str = "") -> str:
     log.info("Step 1/4: Generating SEO outline with Groq (%s)...", model)
     try:
         response = client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": OUTLINE_SYSTEM_PROMPT},
-                {"role": "user", "content": OUTLINE_PROMPT.format(topic=topic)},
+                {"role": "user", "content": with_guidance(OUTLINE_PROMPT.format(topic=topic), guidance)},
             ],
             temperature=0.6,
             max_completion_tokens=2048,
@@ -258,29 +276,36 @@ Rules:
 - Output clean Markdown only."""
 
 
-def draft_article(client: genai.Client, model: str, topic: str, outline: str) -> str:
+def draft_article(client: genai.Client, model: str, topic: str, outline: str, guidance: str = "") -> str:
     log.info("Step 2/4: Drafting full article with Gemini (%s)... this can take a minute.", model)
     for attempt in range(1, GEMINI_RETRIES + 1):
         try:
-            response = client.models.generate_content(
+            # Streaming keeps the connection busy, so proxies don't drop it during long articles.
+            stream = client.models.generate_content_stream(
                 model=model,
-                contents=ARTICLE_PROMPT.format(topic=topic, outline=outline),
+                contents=with_guidance(ARTICLE_PROMPT.format(topic=topic, outline=outline), guidance),
                 config=genai_types.GenerateContentConfig(
                     system_instruction=ARTICLE_SYSTEM_PROMPT,
                     temperature=0.7,
                     max_output_tokens=16384,
                 ),
             )
+            text = "".join(chunk.text or "" for chunk in stream)
             break
-        except genai_errors.APIError as exc:
-            # Free-tier Gemini often returns 503 "high demand" or 429; these clear up within seconds.
-            if exc.code not in (429, 500, 503, 504) or attempt == GEMINI_RETRIES:
+        except (genai_errors.APIError, httpx.TransportError) as exc:
+            # Free-tier Gemini often returns 503 "high demand" or 429, or drops the connection;
+            # these clear up within seconds.
+            code = getattr(exc, "code", None)
+            if isinstance(exc, genai_errors.APIError) and code not in (429, 500, 503, 504):
                 raise PipelineError(f"Gemini article generation failed: {exc}") from exc
+            reason = f"HTTP {code}" if code else "connection dropped"
+            if attempt == GEMINI_RETRIES:
+                raise PipelineError(f"Gemini article generation failed after {attempt} tries ({reason}).") from exc
             delay = 5 * 2 ** (attempt - 1)
-            log.warning("  Gemini busy (HTTP %s); retrying in %ss (%s/%s)", exc.code, delay, attempt, GEMINI_RETRIES)
+            log.warning("  Gemini busy (%s); retrying in %ss (%s/%s)", reason, delay, attempt, GEMINI_RETRIES)
             time.sleep(delay)
 
-    article = strip_code_fences(response.text or "")
+    article = strip_code_fences(text)
     if not article:
         raise PipelineError("Gemini returned an empty article (it may have been blocked by safety filters).")
     log.info("  Article ready (~%d words).", len(article.split()))
@@ -290,24 +315,28 @@ def draft_article(client: genai.Client, model: str, topic: str, outline: str) ->
 # --------------------------------------------------------------------------- #
 # Step 3: Featured image (Pollinations)
 # --------------------------------------------------------------------------- #
-def build_image_url(base_url: str, topic: str, title: str) -> str:
-    prompt = (
+def default_image_prompt(topic: str, title: str) -> str:
+    return (
         f"Professional blog featured image for an article titled '{title}' about {topic}. "
         "Modern editorial photography style, vibrant natural lighting, high detail, "
         "clean composition, no text, no watermark."
     )
+
+
+def build_image_url(base_url: str, topic: str, title: str, prompt: str | None = None) -> str:
+    prompt = prompt or default_image_prompt(topic, title)
     params = {"model": "flux", "width": 1280, "height": 720, "nologo": "true", "seed": int(time.time()) % 100000}
     return f"{base_url}/{quote(prompt, safe='')}?{urlencode(params)}"
 
 
-def fetch_featured_image(config: Config, topic: str, title: str) -> FeaturedImage:
+def fetch_featured_image(config: Config, topic: str, title: str, prompt: str | None = None) -> FeaturedImage:
     """Build the Pollinations URL and download the image.
 
     The API key is sent only in the Authorization header, never in the URL, so it
     cannot leak into published post content.
     """
     log.info("Step 3/4: Generating featured image with Pollinations AI...")
-    url = build_image_url(config.pollinations_base_url, topic, title)
+    url = build_image_url(config.pollinations_base_url, topic, title, prompt)
     image = FeaturedImage(url=url, alt_text=title)
 
     def download() -> requests.Response:
@@ -383,16 +412,51 @@ class WordPressClient:
             log.warning("  %s", exc)  # alt text is nice to have, not worth failing over
         return media_id
 
-    def create_post(self, title: str, html: str, status: str, excerpt: str, featured_media: int | None) -> dict:
+    def create_post(
+        self,
+        title: str,
+        html: str,
+        status: str,
+        excerpt: str,
+        featured_media: int | None,
+        post_id: int | None = None,
+        date_gmt: str | None = None,
+    ) -> dict:
+        """Create a post, or update `post_id` if the post already exists in WordPress."""
         payload: dict[str, object] = {"title": title, "content": html, "status": status, "excerpt": excerpt}
         if featured_media:
             payload["featured_media"] = featured_media
+        if date_gmt:
+            payload["date_gmt"] = date_gmt
+        if post_id:
+            return self._post(f"{self.posts_url}/{post_id}", "post update", json=payload)
         return self._post(self.posts_url, "post creation", json=payload)
+
+    def current_user(self) -> dict:
+        """Return the authenticated user; used to test the connection."""
+        users_url = re.sub(r"/posts$", "/users/me", self.posts_url)
+        try:
+            response = self.session.get(users_url, params={"context": "edit"}, timeout=HTTP_TIMEOUT)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            raise PipelineError(describe_http_error(exc)) from exc
+        except ValueError as exc:
+            raise PipelineError("WordPress returned a non-JSON response; check WP_URL.") from exc
+
+
+def admin_edit_url(wp_url: str, post_id: int) -> str:
+    return re.sub(r"/wp-json/.*$", f"/wp-admin/post.php?post={post_id}&action=edit", wp_url)
 
 
 def extract_meta_description(outline: str) -> str:
     match = re.search(r"\*\*Meta description:\*\*\s*(.+)", outline, re.IGNORECASE)
     return match.group(1).strip() if match else ""
+
+
+def extract_primary_keyword(outline: str) -> str:
+    match = re.search(r"\*\*Primary keyword:\*\*\s*(.+)", outline, re.IGNORECASE)
+    return match.group(1).strip().strip("\"'") if match else ""
 
 
 def markdown_to_html(markdown_text: str) -> str:
@@ -446,8 +510,10 @@ def run(topic: str, config: Config, status: str, dry_run: bool, output_dir: Path
     started = time.monotonic()
     log.info("Topic: %s", topic)
 
-    outline = generate_outline(Groq(api_key=config.groq_api_key), config.groq_model, topic)
-    article = draft_article(genai.Client(api_key=config.gemini_api_key), config.gemini_model, topic, outline)
+    outline = generate_outline(Groq(api_key=config.groq_api_key), config.groq_model, topic, config.writing_guidance)
+    article = draft_article(
+        genai.Client(api_key=config.gemini_api_key), config.gemini_model, topic, outline, config.writing_guidance
+    )
     title = extract_title(article, fallback=extract_title(outline, fallback=topic))
     image = fetch_featured_image(config, topic, title)
 
@@ -463,8 +529,7 @@ def run(topic: str, config: Config, status: str, dry_run: bool, output_dir: Path
     if post.get("link"):
         log.info("  View: %s", post["link"])
     if post.get("id"):
-        admin_url = re.sub(r"/wp-json/.*$", f"/wp-admin/post.php?post={post['id']}&action=edit", config.wp_url)
-        log.info("  Edit: %s", admin_url)
+        log.info("  Edit: %s", admin_edit_url(config.wp_url, post["id"]))
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

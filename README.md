@@ -1,6 +1,11 @@
-# Zero-Cost Automated Blog Generator
+# Autoblog: Zero-Cost Automated Blog Generator
 
-A Python script that turns a topic or seed keyword into a full SEO blog post and sends it to WordPress. Every service it uses has a free tier.
+Turn a topic or seed keyword into a full SEO blog post with a featured image, review it, and publish it to WordPress. Every service it uses has a free tier.
+
+There are two ways to use it:
+
+- **The dashboard** (recommended): a local web app where you add topics, watch posts being written, review and edit them with an SEO checklist, then publish or schedule with one click.
+- **The command line**: `python main.py "your topic"`, handy for cron jobs and scripts.
 
 | Step | Service | What it does |
 |------|---------|--------------|
@@ -42,6 +47,8 @@ pip install -r requirements.txt
 
 ### 3. Configure `.env`
 
+> Using the dashboard? You can skip this step and paste your keys on its **Settings** page instead. It writes the same `.env` file.
+
 ```bash
 cp .env.example .env      # Windows: copy .env.example .env
 ```
@@ -65,7 +72,42 @@ If any variable is missing, the script stops before calling any API and tells yo
 
 `.env` is listed in `.gitignore`. **Never commit it.**
 
-## Usage
+## The dashboard
+
+```bash
+python app.py
+```
+
+Your browser opens at <http://127.0.0.1:8000>. The dashboard only listens on your own computer, because it can read your keys and post to your site. Stop it with `Ctrl+C`. Use `--port 8080` to change the port, or `--no-browser` to skip opening the browser.
+
+**First time?** The dashboard shows a short checklist: add your AI keys, connect WordPress, and write your first post. Each step has a button that takes you where you need to go, and **Settings** has a **Test** button for every service, so you know your keys work before you write anything.
+
+### How you'll use it day to day
+
+1. **Add topics.** Type one into *What should we write about next?* on the dashboard, or press **N** (or click **New post**) to paste many at once. Stuck for ideas? Enter your blog's niche and click **Suggest** to get topics people search for, then click the ones you like.
+2. **Let it write.** Each post shows a live tracker (Outline → Article → Image) and usually takes 1–3 minutes. Several posts are written one after another, so you can close the page and come back later.
+3. **Review.** Finished posts move to **Ready to review**. On the review screen you can:
+   - read the post as it will look on your site, or edit the text (it saves automatically)
+   - adjust the title, the search snippet (meta description) and the focus keyword
+   - follow the **SEO check**: a score out of 100 with plain-English tips, such as keyword placement, length and headings
+   - make a new featured image, optionally describing what you want
+   - click **Rewrite with AI** to start the post over
+4. **Publish.** Choose **Publish now**, **Schedule** (WordPress publishes it at the time you pick, even if your computer is off), or **Save as WordPress draft**. Editing a post that's already live and clicking **Update live post** replaces it on your site.
+
+### Screens
+
+| Screen | What it's for |
+|--------|---------------|
+| **Dashboard** | Counts for each stage, *Needs your attention* (posts to review or retry), posts being written, upcoming scheduled posts, a light for each service connection, and recent activity |
+| **Posts** | A board with columns *Ideas → Writing → Ready to review → Scheduled → Published*, plus search and **Write all ideas** |
+| **Post** | The writing tracker, the review editor, or a plain-language error with **Try again**, depending on where the post is |
+| **Settings** | API keys (with free-key links and **Test** buttons), your WordPress site, writing style (audience and tone), and the AI models |
+
+When something fails, you see why and what to do next. Busy AI services are retried automatically, and a failed rewrite can go back to the previous draft. Light and dark mode follow your system, and the toggle sits at the bottom of the sidebar. The layout works on phones too.
+
+Posts, their history and images are stored in `data/`, which git ignores. Back up that folder to keep your post history.
+
+## Command line
 
 ```bash
 # Pass the topic as an argument
@@ -115,6 +157,18 @@ python main.py --dry-run "beginner guide to sourdough"
 - **Featured image.** The script downloads the image from Pollinations and uploads it to your WordPress Media Library, then sets it as the post's featured image with the title as alt text. The Pollinations key is sent only in a request header, so it never appears in a URL or in published content. If the download or upload fails, the post is still created, with the image URL embedded at the top instead.
 - **Errors.** Timeouts, HTTP 429 and 5xx errors from Pollinations and WordPress are retried with exponential backoff. Groq and Gemini errors, and WordPress auth or endpoint errors, stop the run with a clear message (for example, a 401 points you to `WP_USER`/`WP_APP_PASS`). The script exits with a non-zero code on failure, so it works with cron and CI.
 
+## Project files
+
+| File | Purpose |
+|------|---------|
+| `main.py` | The generation pipeline and the command-line tool |
+| `app.py` | The dashboard web server |
+| `worker.py` | Background worker that writes queued posts one at a time |
+| `store.py` | SQLite storage for posts and activity (`data/autoblog.db`) |
+| `settings.py` | Reads and writes `.env` for the Settings page |
+| `seo.py` | The SEO checklist |
+| `static/` | The dashboard's HTML, CSS and JavaScript (no build step) |
+
 ## Troubleshooting
 
 | Problem | Fix |
@@ -124,4 +178,6 @@ python main.py --dry-run "beginner guide to sourdough"
 | Groq / Gemini `429` | You hit a free-tier rate limit. Wait a minute and try again. |
 | No featured image | Check `POLLINATIONS_API_KEY`. If Pollinations changes its endpoint, set `POLLINATIONS_BASE_URL` in `.env`. |
 | Gemini `404 NOT_FOUND` for the model | Google retired that model for your key. Set `GEMINI_MODEL` in `.env` to the model named in the error. |
+| Dashboard won't start: "address already in use" | Another program is using port 8000. Run `python app.py --port 8080`. |
+| Gemini says it's busy, or writing takes several tries | The free tier gets overloaded at peak times. Autoblog retries automatically; if a post still fails, click **Try again** a little later. |
 | Gemini returns an empty article | The topic may have triggered safety filters. Rephrase it. |

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Autoblog</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%235b4cf0'/%3E%3Cpath d='M16 7l2.2 6.3L24.5 16l-6.3 2.2L16 25l-2.2-6.8L7.5 16l6.3-2.7z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css">
+  <script>
+    try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#/">
+        <span class="brand-mark"><span data-icon="sparkles"></span></span>
+        <span class="brand-name">Autoblog</span>
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="#/" data-route="home"><span data-icon="home"></span><span>Dashboard</span></a>
+        <a href="#/board" data-route="board"><span data-icon="board"></span><span>Posts</span></a>
+        <a href="#/settings" data-route="settings"><span data-icon="settings"></span><span>Settings</span></a>
+      </nav>
+      <div class="sidebar-foot">
+        <button class="btn btn-primary btn-block new-post-btn" data-action="new-post">
+          <span data-icon="plus"></span><span>New post</span>
+        </button>
+        <button class="theme-toggle" data-action="toggle-theme" aria-label="Switch light or dark mode">
+          <span data-icon="moon"></span><span class="theme-label">Dark mode</span>
+        </button>
+      </div>
+    </aside>
+    <main class="main" id="view" tabindex="-1"></main>
+  </div>
+  <div id="modal-root"></div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
