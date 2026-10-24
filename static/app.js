@@ -451,11 +451,11 @@ function postCard(p) {
   if (p.status === "scheduled") meta.push(`${icon("calendar", "icon-sm")} ${esc(fmtDate(p.scheduled_at))}`);
   else if (p.status === "published") meta.push(`${icon("globe", "icon-sm")} ${esc(ago(p.published_at || p.updated_at))}`);
   else if (p.words && p.status === "review") meta.push(plural(p.words, "word"));
-  if (p.status === "review" && p.wp_status === "draft") meta.push(`<span class="pill">In WordPress drafts</span>`);
   if (!["scheduled", "published", "queued", "generating"].includes(p.status)) meta.push(esc(ago(p.updated_at)));
+  const draft = p.status === "review" && p.wp_status === "draft" ? `<div class="post-card-meta"><span class="pill">In WordPress drafts</span></div>` : "";
   return `<a class="post-card ${p.status === "failed" ? "failed" : ""}" href="#/post/${p.id}">${img}
     <div class="post-card-body"><h3>${esc(postName(p))}</h3>
-      ${meta.length ? `<div class="post-card-meta">${meta.join(" · ")}</div>` : ""}${extra}</div></a>`;
+      ${meta.length ? `<div class="post-card-meta">${meta.join(" · ")}</div>` : ""}${draft}${extra}</div></a>`;
 }
 
 /* ==================================================================== */

@@ -7,6 +7,8 @@ There are two ways to use it:
 - **The dashboard** (recommended): a local web app where you add topics, watch posts being written, review and edit them with an SEO checklist, then publish or schedule with one click.
 - **The command line**: `python main.py "your topic"`, handy for cron jobs and scripts.
 
+![The Autoblog dashboard](docs/screenshots/dashboard.png)
+
 | Step | Service | What it does |
 |------|---------|--------------|
 | 1 | **Groq** (`llama-3.3-70b-versatile`) | Writes an SEO outline in Markdown: title, meta description, keywords, H2/H3 structure |
@@ -96,6 +98,24 @@ Your browser opens at <http://127.0.0.1:8000>. The dashboard only listens on you
 
 ### Screens
 
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/board.png" alt="Posts board with columns from Ideas to Published"><br><b>Posts board:</b> every post from idea to published</td>
+    <td width="50%"><img src="docs/screenshots/review.png" alt="Review editor with preview, SEO check and publish options"><br><b>Review:</b> preview, edit, SEO check and publishing options</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/new-post.png" alt="New post window with topic suggestions"><br><b>New post:</b> add several topics at once, or pick from suggestions</td>
+    <td><img src="docs/screenshots/writing.png" alt="Live writing progress: outline, article, image"><br><b>Writing:</b> live progress while a post is created</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/settings.png" alt="Settings with API keys and connection tests"><br><b>Settings:</b> keys, WordPress and connection tests</td>
+    <td><img src="docs/screenshots/dashboard-dark.png" alt="Dashboard in dark mode"><br><b>Dark mode:</b> follows your system, or switch it in the sidebar</td>
+  </tr>
+</table>
+
+<p align="center"><img src="docs/screenshots/mobile.png" alt="Posts board on a phone" width="260"><br><b>On a phone:</b> navigation moves to the bottom and the board scrolls sideways</p>
+
+
 | Screen | What it's for |
 |--------|---------------|
 | **Dashboard** | Counts for each stage, *Needs your attention* (posts to review or retry), posts being written, upcoming scheduled posts, a light for each service connection, and recent activity |
@@ -168,6 +188,7 @@ python main.py --dry-run "beginner guide to sourdough"
 | `settings.py` | Reads and writes `.env` for the Settings page |
 | `seo.py` | The SEO checklist |
 | `static/` | The dashboard's HTML, CSS and JavaScript (no build step) |
+| `docs/screenshots/` | Images used in this README |
 
 ## Troubleshooting
 
